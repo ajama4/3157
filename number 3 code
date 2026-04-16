@@ -1,0 +1,62 @@
+import spidev
+import time
+from collections import deque
+
+# --- SPI Setup ---
+spi = spidev.SpiDev()
+spi.open(0, 0)                 # Bus 0, CE0
+spi.max_speed_hz = 1350000     # Max safe speed for 3.3V
+spi.mode = 0                   # SPI mode 0
+
+# --- Read one channel ---
+def read_adc(channel):
+    # Send 3 bytes to MCP3008
+    adc = spi.xfer2([1, (8 + channel) << 4, 0])
+
+    # Combine returned bytes into 10-bit value
+    raw_value = ((adc[1] & 3) << 8) + adc[2]
+
+    # Convert to voltage (0–3.3V)
+    voltage = (raw_value / 1023.0) * 3.3
+
+    return raw_value, voltage
+
+# --- Target sample rate ---
+sample_rate = 2000
+sample_period = 1.0 / sample_rate
+
+# --- Buffer for averaging (last 100 samples) ---
+buffer = deque(maxlen=100)
+
+print("Sampling at ~2 kHz. Press Ctrl+C to stop.")
+
+next_time = time.perf_counter()
+count = 0
+
+try:
+    while True:
+
+        # Read from channel 0
+        raw, voltage = read_adc(0)
+
+        # Add to buffer
+        buffer.append(voltage)
+
+        # Compute average
+        avg_voltage = sum(buffer) / len(buffer)
+
+        # Print every 20th sample
+        if count % 20 == 0:
+            print(f"Raw: {raw}   Voltage: {voltage:.2f} V   Avg: {avg_voltage:.2f} V")
+
+        count += 1
+
+        # Maintain stable timing
+        next_time += sample_period
+        sleep_time = next_time - time.perf_counter()
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+except KeyboardInterrupt:
+    spi.close()
+    print("Stopped.")
